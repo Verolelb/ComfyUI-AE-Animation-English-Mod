@@ -11,7 +11,7 @@ While the original node is powerful, this version adds specific features for bet
 
 ## Original Features (v1.1.0)
 *   **Timeline Editor**: Visual keyframe editing.
-*   **Multi-layer**: Background + multiple foregrounds.
+*   **Multi-layer**: Background + multiple image input
 *   **Mask Editor**: Brush with jitter edges.
 *   **Background Extraction**: Extract subjects and auto-fill backgrounds.
 *   **Performance**: Image compression, lazy loading.
