@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mask & Bezier Path Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #00ff00;
+        }
+        
+        .demo-section {
+            background: #2a2a2a;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .demo-section h2 {
+            margin-bottom: 15px;
+            color: #3498db;
+        }
+        
+        canvas {
+            background: #000;
+            border: 2px solid #3c3c3c;
+            border-radius: 5px;
+            display: block;
+            margin: 0 auto;
+            cursor: crosshair;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin: 15px 0;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+        
+        .btn-primary { background: #3498db; color: #fff; }
+        .btn-success { background: #27ae60; color: #fff; }
+        .btn-danger { background: #e74c3c; color: #fff; }
+        .btn-warning { background: #f39c12; color: #fff; }
+        
+        input[type="range"] {
+            width: 200px;
+        }
+        
+        .info {
+            background: #333;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        
+        .feature-list {
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        .feature-list li {
+            padding: 5px 0;
+        }
+        
+        .feature-list li:before {
+            content: "✓ ";
+            color: #27ae60;
+            font-weight: bold;
+            margin-right: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎨 Mask & Bezier Path Editor Demo</h1>
+        
+        <!-- Mask Editor Demo -->
+        <div class="demo-section">
+            <h2>🖌️ Mask Editor - 手动绘制Mask</h2>
+            
+            <div class="info">
+                <strong>功能说明：</strong>
+                <ul class="feature-list">
+                    <li>画笔工具绘制白色mask区域</li>
+                    <li>橡皮擦工具擦除mask</li>
+                    <li>可调节画笔大小 (1-100px)</li>
+                    <li>支持填充和清空操作</li>
+                </ul>
+            </div>
+            
+            <canvas id="maskCanvas" width="800" height="450"></canvas>
+            
+            <div class="controls">
+                <button class="btn-primary" id="brushBtn">🖌️ 画笔</button>
+                <button class="btn-warning" id="eraserBtn">🧹 橡皮擦</button>
+                <div>
+                    <label>画笔大小: <span id="sizeValue">20</span>px</label>
+                    <input type="range" id="sizeSlider" min="1" max="100" value="20">
+                </div>
+                <button class="btn-success" id="fillBtn">⬜ 填充</button>
+                <button class="btn-danger" id="clearMaskBtn">🗑️ 清空</button>
+                <button class="btn-primary" id="exportMaskBtn">💾 导出</button>
+            </div>
+        </div>
+        
+        <!-- Bezier Path Editor Demo -->
+        <div class="demo-section">
+            <h2>📈 Bezier Path Editor - 贝塞尔曲线路径</h2>
+            
+            <div class="info">
+                <strong>功能说明：</strong>
+                <ul class="feature-list">
+                    <li>拖动绿色点移动路径点</li>
+                    <li>拖动橙色点调整贝塞尔曲线</li>
+                    <li>双击画布添加新路径点</li>
+                    <li>自动生成沿路径的关键帧</li>
+                </ul>
+            </div>
+            
+            <canvas id="pathCanvas" width="800" height="450"></canvas>
+            
+            <div class="controls">
+                <button class="btn-primary" id="addPointBtn">➕ 添加点</button>
+                <button class="btn-warning" id="removePointBtn">➖ 删除点</button>
+                <button class="btn-success" id="applyPathBtn">✨ 应用路径</button>
+                <button class="btn-danger" id="clearPathBtn">🗑️ 清空</button>
+                <label>
+                    <input type="checkbox" id="showCPCheckbox" checked> 显示控制点
+                </label>
+                <span id="pathInfo">点数: 0</span>
+            </div>
+            
+            <div class="info">
+                <strong>生成的关键帧:</strong>
+                <pre id="keyframesOutput" style="background: #1a1a1a; padding: 10px; border-radius: 5px; max-height: 200px; overflow-y: auto; font-size: 11px;">等待生成...</pre>
+            </div>
+        </div>
+    </div>
+    
+    <script type="module">
+        // Simple MaskEditor implementation
+        class SimpleMaskEditor {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.isDrawing = false;
+                this.tool = 'brush';
+                this.brushSize = 20;
+                this.lastX = 0;
+                this.lastY = 0;
+                
+                // Clear canvas
+                this.ctx.fillStyle = 'black';
+                this.ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                this.bindEvents();
+            }
+            
+            bindEvents() {
+                this.canvas.addEventListener('mousedown', this.onMouseDown.bind(this));
+                this.canvas.addEventListener('mousemove', this.onMouseMove.bind(this));
+                this.canvas.addEventListener('mouseup', this.onMouseUp.bind(this));
+                this.canvas.addEventListener('mouseleave', this.onMouseUp.bind(this));
+            }
+            
+            onMouseDown(e) {
+                this.isDrawing = true;
+                const pos = this.getMousePos(e);
+                this.lastX = pos.x;
+                this.lastY = pos.y;
+            }
+            
+            onMouseMove(e) {
+                if (!this.isDrawing) return;
+                const pos = this.getMousePos(e);
+                this.draw(this.lastX, this.lastY, pos.x, pos.y);
+                this.lastX = pos.x;
+                this.lastY = pos.y;
+            }
+            
+            onMouseUp() {
+                this.isDrawing = false;
+            }
+            
+            getMousePos(e) {
+                const rect = this.canvas.getBoundingClientRect();
+                return {
+                    x: e.clientX - rect.left,
+                    y: e.clientY - rect.top
+                };
+            }
+            
+            draw(x1, y1, x2, y2) {
+                this.ctx.save();
+                
+                if (this.tool === 'brush') {
+                    this.ctx.globalCompositeOperation = 'source-over';
+                    this.ctx.strokeStyle = 'white';
+                } else {
+                    this.ctx.globalCompositeOperation = 'destination-out';
+                }
+                
+                this.ctx.lineWidth = this.brushSize;
+                this.ctx.lineCap = 'round';
+                this.ctx.lineJoin = 'round';
+                
+                this.ctx.beginPath();
+                this.ctx.moveTo(x1, y1);
+                this.ctx.lineTo(x2, y2);
+                this.ctx.stroke();
+                
+                this.ctx.restore();
+            }
+            
+            clear() {
+                this.ctx.fillStyle = 'black';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            }
+            
+            fill() {
+                this.ctx.fillStyle = 'white';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            }
+        }
+        
+        // Simple BezierPathEditor implementation
+        class SimpleBezierPathEditor {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.points = [
+                    {x: 100, y: 225, cp1x: 100, cp1y: 225, cp2x: 150, cp2y: 175},
+                    {x: 400, y: 225, cp1x: 350, cp1y: 275, cp2x: 450, cp2y: 175},
+                    {x: 700, y: 225, cp1x: 650, cp1y: 275, cp2x: 700, cp2y: 225}
+                ];
+                this.dragPoint = null;
+                this.showControlPoints = true;
+                
+                this.bindEvents();
+                this.draw();
+            }
+            
+            bindEvents() {
+                this.canvas.addEventListener('mousedown', this.onMouseDown.bind(this));
+                this.canvas.addEventListener('mousemove', this.onMouseMove.bind(this));
+                this.canvas.addEventListener('mouseup', this.onMouseUp.bind(this));
+                this.canvas.addEventListener('dblclick', this.onDoubleClick.bind(this));
+            }
+            
+            onMouseDown(e) {
+                const pos = this.getMousePos(e);
+                
+                for (let i = 0; i < this.points.length; i++) {
+                    const p = this.points[i];
+                    if (this.hitTest(pos.x, pos.y, p.x, p.y, 6)) {
+                        this.dragPoint = {index: i, type: 'point'};
+                        return;
+                    }
+                    if (this.hitTest(pos.x, pos.y, p.cp1x, p.cp1y, 4)) {
+                        this.dragPoint = {index: i, type: 'cp1'};
+                        return;
+                    }
+                    if (this.hitTest(pos.x, pos.y, p.cp2x, p.cp2y, 4)) {
+                        this.dragPoint = {index: i, type: 'cp2'};
+                        return;
+                    }
+                }
+            }
+            
+            onMouseMove(e) {
+                if (!this.dragPoint) return;
+                
+                const pos = this.getMousePos(e);
+                const p = this.points[this.dragPoint.index];
+                
+                if (this.dragPoint.type === 'point') {
+                    const dx = pos.x - p.x;
+                    const dy = pos.y - p.y;
+                    p.x = pos.x;
+                    p.y = pos.y;
+                    p.cp1x += dx;
+                    p.cp1y += dy;
+                    p.cp2x += dx;
+                    p.cp2y += dy;
+                } else if (this.dragPoint.type === 'cp1') {
+                    p.cp1x = pos.x;
+                    p.cp1y = pos.y;
+                } else {
+                    p.cp2x = pos.x;
+                    p.cp2y = pos.y;
+                }
+                
+                this.draw();
+            }
+            
+            onMouseUp() {
+                this.dragPoint = null;
+            }
+            
+            onDoubleClick(e) {
+                const pos = this.getMousePos(e);
+                this.points.push({
+                    x: pos.x, y: pos.y,
+                    cp1x: pos.x - 30, cp1y: pos.y,
+                    cp2x: pos.x + 30, cp2y: pos.y
+                });
+                this.draw();
+                document.getElementById('pathInfo').textContent = `点数: ${this.points.length}`;
+            }
+            
+            hitTest(x1, y1, x2, y2, radius) {
+                return Math.sqrt((x1-x2)**2 + (y1-y2)**2) <= radius;
+            }
+            
+            getMousePos(e) {
+                const rect = this.canvas.getBoundingClientRect();
+                return {
+                    x: e.clientX - rect.left,
+                    y: e.clientY - rect.top
+                };
+            }
+            
+            draw() {
+                this.ctx.fillStyle = '#000';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                if (this.points.length < 2) return;
+                
+                // Draw path
+                this.ctx.strokeStyle = '#00ff00';
+                this.ctx.lineWidth = 2;
+                this.ctx.beginPath();
+                this.ctx.moveTo(this.points[0].x, this.points[0].y);
+                
+                for (let i = 1; i < this.points.length; i++) {
+                    const p0 = this.points[i-1];
+                    const p1 = this.points[i];
+                    this.ctx.bezierCurveTo(p0.cp2x, p0.cp2y, p1.cp1x, p1.cp1y, p1.x, p1.y);
+                }
+                
+                this.ctx.stroke();
+                
+                // Draw control points
+                if (this.showControlPoints) {
+                    this.points.forEach((p, i) => {
+                        // Control lines
+                        this.ctx.strokeStyle = '#888';
+                        this.ctx.lineWidth = 1;
+                        this.ctx.setLineDash([3, 3]);
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(p.x, p.y);
+                        this.ctx.lineTo(p.cp1x, p.cp1y);
+                        this.ctx.moveTo(p.x, p.y);
+                        this.ctx.lineTo(p.cp2x, p.cp2y);
+                        this.ctx.stroke();
+                        this.ctx.setLineDash([]);
+                        
+                        // Main point
+                        this.ctx.fillStyle = '#00ff00';
+                        this.ctx.beginPath();
+                        this.ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+                        this.ctx.fill();
+                        this.ctx.strokeStyle = '#fff';
+                        this.ctx.lineWidth = 2;
+                        this.ctx.stroke();
+                        
+                        // Control points
+                        this.ctx.fillStyle = '#ffaa00';
+                        this.ctx.beginPath();
+                        this.ctx.arc(p.cp1x, p.cp1y, 4, 0, Math.PI * 2);
+                        this.ctx.fill();
+                        this.ctx.beginPath();
+                        this.ctx.arc(p.cp2x, p.cp2y, 4, 0, Math.PI * 2);
+                        this.ctx.fill();
+                        
+                        // Label
+                        this.ctx.fillStyle = '#fff';
+                        this.ctx.font = '10px monospace';
+                        this.ctx.fillText(i, p.x + 8, p.y - 8);
+                    });
+                }
+            }
+            
+            generateKeyframes(count) {
+                const keyframes = [];
+                for (let i = 0; i <= count; i++) {
+                    const t = i / count;
+                    const pos = this.getPointOnPath(t);
+                    keyframes.push({
+                        frame: i,
+                        time: (t * 5).toFixed(2), // 假设5秒duration
+                        x: Math.round(pos.x),
+                        y: Math.round(pos.y)
+                    });
+                }
+                return keyframes;
+            }
+            
+            getPointOnPath(t) {
+                if (this.points.length < 2) return {x: 0, y: 0};
+                
+                const segCount = this.points.length - 1;
+                const scaledT = t * segCount;
+                const segIndex = Math.floor(scaledT);
+                const segT = scaledT - segIndex;
+                
+                if (segIndex >= segCount) {
+                    const last = this.points[this.points.length - 1];
+                    return {x: last.x, y: last.y};
+                }
+                
+                const p0 = this.points[segIndex];
+                const p1 = this.points[segIndex + 1];
+                
+                const t2 = segT * segT;
+                const t3 = t2 * segT;
+                const mt = 1 - segT;
+                const mt2 = mt * mt;
+                const mt3 = mt2 * mt;
+                
+                return {
+                    x: mt3 * p0.x + 3 * mt2 * segT * p0.cp2x + 3 * mt * t2 * p1.cp1x + t3 * p1.x,
+                    y: mt3 * p0.y + 3 * mt2 * segT * p0.cp2y + 3 * mt * t2 * p1.cp1y + t3 * p1.y
+                };
+            }
+        }
+        
+        // Initialize Mask Editor
+        const maskCanvas = document.getElementById('maskCanvas');
+        const maskEditor = new SimpleMaskEditor(maskCanvas);
+        
+        document.getElementById('brushBtn').onclick = () => {
+            maskEditor.tool = 'brush';
+            document.getElementById('brushBtn').classList.add('btn-success');
+            document.getElementById('brushBtn').classList.remove('btn-primary');
+            document.getElementById('eraserBtn').classList.remove('btn-danger');
+            document.getElementById('eraserBtn').classList.add('btn-warning');
+        };
+        
+        document.getElementById('eraserBtn').onclick = () => {
+            maskEditor.tool = 'eraser';
+            document.getElementById('eraserBtn').classList.add('btn-danger');
+            document.getElementById('eraserBtn').classList.remove('btn-warning');
+            document.getElementById('brushBtn').classList.remove('btn-success');
+            document.getElementById('brushBtn').classList.add('btn-primary');
+        };
+        
+        document.getElementById('sizeSlider').oninput = (e) => {
+            maskEditor.brushSize = parseInt(e.target.value);
+            document.getElementById('sizeValue').textContent = e.target.value;
+        };
+        
+        document.getElementById('fillBtn').onclick = () => maskEditor.fill();
+        document.getElementById('clearMaskBtn').onclick = () => maskEditor.clear();
+        document.getElementById('exportMaskBtn').onclick = () => {
+            const dataURL = maskCanvas.toDataURL('image/png');
+            const link = document.createElement('a');
+            link.download = 'mask.png';
+            link.href = dataURL;
+            link.click();
+        };
+        
+        // Initialize Path Editor
+        const pathCanvas = document.getElementById('pathCanvas');
+        const pathEditor = new SimpleBezierPathEditor(pathCanvas);
+        document.getElementById('pathInfo').textContent = `点数: ${pathEditor.points.length}`;
+        
+        document.getElementById('addPointBtn').onclick = () => {
+            const last = pathEditor.points[pathEditor.points.length - 1];
+            pathEditor.points.push({
+                x: last.x + 100, y: last.y,
+                cp1x: last.x + 50, cp1y: last.y - 30,
+                cp2x: last.x + 150, cp2y: last.y + 30
+            });
+            pathEditor.draw();
+            document.getElementById('pathInfo').textContent = `点数: ${pathEditor.points.length}`;
+        };
+        
+        document.getElementById('removePointBtn').onclick = () => {
+            if (pathEditor.points.length > 2) {
+                pathEditor.points.pop();
+                pathEditor.draw();
+                document.getElementById('pathInfo').textContent = `点数: ${pathEditor.points.length}`;
+            }
+        };
+        
+        document.getElementById('applyPathBtn').onclick = () => {
+            const keyframes = pathEditor.generateKeyframes(30);
+            document.getElementById('keyframesOutput').textContent = 
+                JSON.stringify(keyframes.slice(0, 10), null, 2) + '\n...\n(共 ' + keyframes.length + ' 个关键帧)';
+        };
+        
+        document.getElementById('clearPathBtn').onclick = () => {
+            if (confirm('确定清空所有路径点？')) {
+                pathEditor.points = [];
+                pathEditor.draw();
+                document.getElementById('pathInfo').textContent = `点数: 0`;
+            }
+        };
+        
+        document.getElementById('showCPCheckbox').onchange = (e) => {
+            pathEditor.showControlPoints = e.target.checked;
+            pathEditor.draw();
+        };
+    </script>
+</body>
+</html>
