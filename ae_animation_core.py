@@ -76,7 +76,14 @@ class AEAnimationCore(io.ComfyNode):
                 io.Int.Input("mask_expansion", default=0, min=-255, max=255),
                 io.Int.Input("mask_feather", default=0, min=0, max=100),
                 io.String.Input("layers_keyframes", default="[]", multiline=True),
-                io.Image.Input("foreground_images", optional=True),
+                
+                # 5 Optional Image Inputs
+                io.Image.Input("image_1", optional=True),
+                io.Image.Input("image_2", optional=True),
+                io.Image.Input("image_3", optional=True),
+                io.Image.Input("image_4", optional=True),
+                io.Image.Input("image_5", optional=True),
+                
                 io.Image.Input("background_image", optional=True),
                 preview_input,
                 io.String.Input("unique_id", default="", optional=True),
@@ -111,7 +118,7 @@ class AEAnimationCore(io.ComfyNode):
             "keyframes": saved_data.get("keyframes", {}),
         }
         
-        # Updated common props to include scale_x and scale_y
+        # Common props
         common_props = ["x", "y", "scale", "scale_x", "scale_y", "rotation", "flip_h", "flip_v"]
         
         if layer_type == "background":
@@ -149,7 +156,12 @@ class AEAnimationCore(io.ComfyNode):
         mask_expansion: int,
         mask_feather: int,
         layers_keyframes: str,
-        foreground_images: Optional[torch.Tensor] = None,
+        # 5 Discrete inputs
+        image_1: Optional[torch.Tensor] = None,
+        image_2: Optional[torch.Tensor] = None,
+        image_3: Optional[torch.Tensor] = None,
+        image_4: Optional[torch.Tensor] = None,
+        image_5: Optional[torch.Tensor] = None,
         background_image: Optional[torch.Tensor] = None,
         ui_preview_only: Any = False,
         unique_id: Optional[str] = None,
@@ -184,32 +196,52 @@ class AEAnimationCore(io.ComfyNode):
             # Try to restore from cached data
             existing = next((k for k in saved_keyframes if k.get("id") == "background" and k.get("image_data")), None)
             if existing:
-                # Ensure all required fields are present
                 if "name" not in existing:
                     existing["name"] = "Background"
                 if "type" not in existing:
                     existing["type"] = "background"
                 layers.append(existing)
 
-        # Process foreground images
+        # Process foreground images (1 to 5)
         processed_ids = set()
-        if foreground_images is not None:
-            # Handle batch dimension: if 4D [B, H, W, C], split into list of images
-            if isinstance(foreground_images, torch.Tensor) and foreground_images.ndim == 4:
-                fg_tensors = [foreground_images[i:i+1] for i in range(foreground_images.shape[0])]
+        
+        # Put inputs in a list to iterate
+        input_images = [image_1, image_2, image_3, image_4, image_5]
+        
+        current_layer_index = 0
+        
+        for input_idx, tensor in enumerate(input_images):
+            if tensor is None:
+                continue
+                
+            # Even within one input (e.g., image_1), it could be a batch of images
+            # Handle batch dimension: if 4D [B, H, W, C], split into list
+            if isinstance(tensor, torch.Tensor) and tensor.ndim == 4:
+                batch_tensors = [tensor[i:i+1] for i in range(tensor.shape[0])]
             else:
-                fg_tensors = _ensure_list(foreground_images)
+                batch_tensors = _ensure_list(tensor)
             
-            for idx, tensor in enumerate(fg_tensors):
-                if tensor is None:
+            for b_idx, single_tensor in enumerate(batch_tensors):
+                if single_tensor is None: 
                     continue
-                fg_b64 = _tensor_to_b64(tensor)
+                fg_b64 = _tensor_to_b64(single_tensor)
                 if not fg_b64:
                     continue
-                layer_id = f"layer_{idx}"
+                
+                # Create a unique ID. Logic: layer_0, layer_1, etc.
+                layer_id = f"layer_{current_layer_index}"
                 processed_ids.add(layer_id)
+                
+                # Name it nicely: "Image 1", "Image 2 (Batch 2)", etc.
+                if len(batch_tensors) > 1:
+                    name = f"Image {input_idx+1} (Batch {b_idx+1})"
+                else:
+                    name = f"Image {input_idx+1}"
+
                 existing = next((k for k in saved_keyframes if k.get("id") == layer_id), {})
-                layers.append(cls._build_layer(layer_id, f"Layer {idx+1}", "foreground", fg_b64, existing))
+                layers.append(cls._build_layer(layer_id, name, "foreground", fg_b64, existing))
+                
+                current_layer_index += 1
         
         # Add any additional foreground layers from saved_keyframes (e.g., extracted layers)
         extracted_count = 0
@@ -227,7 +259,7 @@ class AEAnimationCore(io.ComfyNode):
         final_animation = {"project": project_data, "layers": layers}
         print(f"[AE] Final animation: {len(layers)} total layers")
         
-        # Send WebSocket update to frontend for quick preview (standalone execution)
+        # Send WebSocket update
         if unique_id and layers:
             try:
                 from server import PromptServer
@@ -279,7 +311,6 @@ class AERender(io.ComfyNode):
 
     @classmethod
     def _get_value(cls, keyframes: Dict[str, Any], prop: str, time: float, default: float) -> float:
-        """Get interpolated value from keyframes at specific time."""
         if prop not in keyframes:
             return default
             
@@ -288,7 +319,6 @@ class AERender(io.ComfyNode):
             logging.warning(f"Invalid keyframe data type for property '{prop}': expected list, got {type(frames_data).__name__}")
             return default
             
-        # Filter and validate frames
         frames = []
         invalid_count = 0
         for frame in frames_data:
@@ -304,7 +334,6 @@ class AERender(io.ComfyNode):
             logging.warning(f"No valid frames found for property '{prop}', using default value {default}")
             return default
             
-        # Sort frames by time
         frames.sort(key=lambda k: k["time"])
         if time <= frames[0]["time"]:
             return frames[0]["value"]
@@ -341,7 +370,6 @@ class AERender(io.ComfyNode):
         num_layers = len(layers_data)
         print(f"[AE] Render: {width}x{height}, {start_frame}-{end_frame}/{total_frames}, {num_layers} layers")
         
-        # Decode layers with all metadata
         layers = []
         for layer in layers_data:
             try:
@@ -363,7 +391,6 @@ class AERender(io.ComfyNode):
                     "customMask": custom_mask,
                     "x": layer.get("x", 0),
                     "y": layer.get("y", 0),
-                    # Handle separate scaling properties, default to legacy 'scale' or 1.0
                     "scale": layer.get("scale", 1.0), 
                     "scale_x": layer.get("scale_x", 1.0),
                     "scale_y": layer.get("scale_y", 1.0),
@@ -392,13 +419,9 @@ class AERender(io.ComfyNode):
                 kf = layer.get("keyframes", {})
                 is_foreground = layer.get("type") == "foreground"
 
-                # Use layer's static values as defaults, then override with keyframes
                 x = cls._get_value(kf, "x", time, layer.get("x", 0))
                 y = cls._get_value(kf, "y", time, layer.get("y", 0))
                 
-                # Get scale values. 
-                # Note: We support both legacy 'scale' (uniform) and new 'scale_x/y'.
-                # The logic applies global 'scale' multiplied by individual 'scale_x/y'.
                 base_scale = cls._get_value(kf, "scale", time, layer.get("scale", 1.0))
                 scale_x = cls._get_value(kf, "scale_x", time, layer.get("scale_x", 1.0))
                 scale_y = cls._get_value(kf, "scale_y", time, layer.get("scale_y", 1.0))
@@ -414,7 +437,6 @@ class AERender(io.ComfyNode):
 
                 bg_mode = layer.get("bg_mode", "fit")
 
-                # Apply custom mask to foreground alpha
                 if is_foreground and layer.get("customMask"):
                     try:
                         custom_mask_b64 = layer["customMask"].split(',')[1]
@@ -434,11 +456,9 @@ class AERender(io.ComfyNode):
                     except Exception as e:
                         print(f"[AERender] Custom mask error: {e}")
 
-                # Scaling logic
                 new_w, new_h = img_np.shape[1], img_np.shape[0]
                 
                 if not is_foreground:
-                    # Background scaling
                     orig_w, orig_h = img_np.shape[1], img_np.shape[0]
                     if bg_mode == "fit":
                         mode_scale = min(width / orig_w, height / orig_h)
@@ -448,14 +468,13 @@ class AERender(io.ComfyNode):
                         mode_scale = max(width / orig_w, height / orig_h)
                         final_w = int(orig_w * mode_scale * final_scale_x)
                         final_h = int(orig_h * mode_scale * final_scale_y)
-                    else:  # stretch
+                    else:
                         final_w = int(width * final_scale_x)
                         final_h = int(height * final_scale_y)
                         
                     new_w = max(1, final_w)
                     new_h = max(1, final_h)
                 else:
-                    # Foreground scaling
                     if final_scale_x != 1.0 or final_scale_y != 1.0:
                         new_w = max(1, int(img_np.shape[1] * final_scale_x))
                         new_h = max(1, int(img_np.shape[0] * final_scale_y))
@@ -463,7 +482,6 @@ class AERender(io.ComfyNode):
                 if new_w != img_np.shape[1] or new_h != img_np.shape[0]:
                     img_np = cv2.resize(img_np, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
                 
-                # Apply Flip (Mirror)
                 do_flip_h = flip_h > 0.5
                 do_flip_v = flip_v > 0.5
                 
@@ -484,7 +502,6 @@ class AERender(io.ComfyNode):
                 paste_x = int(width // 2 + x - current_w // 2)
                 paste_y = int(height // 2 + y - current_h // 2)
                 
-                # Generate mask from foreground alpha
                 if is_foreground:
                     if img_np.shape[2] == 4:
                         mask_layer_np = (img_np[:, :, 3].astype(np.float32) * opacity).astype(np.uint8)
@@ -501,7 +518,6 @@ class AERender(io.ComfyNode):
                         src_mask = mask_layer_np[layer_y_offset:layer_y_offset + (m_y_end - m_y_start), layer_x_offset:layer_x_offset + (m_x_end - m_x_start)]
                         mask_canvas[m_y_start:m_y_end, m_x_start:m_x_end] = np.maximum(mask_canvas[m_y_start:m_y_end, m_x_start:m_x_end], src_mask)
 
-                # Composite image
                 y_start = max(0, paste_y)
                 x_start = max(0, paste_x)
                 y_end = min(paste_y + current_h, height)
